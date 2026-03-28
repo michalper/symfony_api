@@ -1,0 +1,11 @@
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+
+    App\:
+        resource: '../src/'
+
+    App\Repository\GameRepositoryInterface: '@App\Repository\GameRepository'
+    App\Repository\PlayerRepositoryInterface: '@App\Repository\PlayerRepository'
+    App\Repository\GameLoveRepositoryInterface: '@App\Repository\GameLoveRepository'

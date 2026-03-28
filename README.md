@@ -1,0 +1,80 @@
+# Game Love Service
+
+REST API that keeps track of the games that players love.
+
+Based on the [comeon-gamelove-assignment](https://github.com/comeon-group/comeon-gamelove-assignment), implemented in **PHP 8.4+ / Symfony 8**.
+
+## Problem Statement
+
+- Create a new "love" entry (player + game)
+- Unlove a game
+- Fetch all games a player has loved
+- Fetch the most loved games (top X, configurable per request)
+- Fetch all games
+
+## Tech Stack
+
+- PHP 8.4+
+- Symfony 8
+- Doctrine ORM
+- SQLite (file-based embedded database)
+- PHPUnit 13
+
+## API Endpoints
+
+| Method | Path                                  | Description                        |
+|--------|---------------------------------------|------------------------------------|
+| POST   | `/api/games`                          | Create a game                      |
+| GET    | `/api/games`                          | List all games                     |
+| GET    | `/api/games/top?limit=10`             | Top loved games (limit adjustable) |
+| POST   | `/api/players`                        | Create a player                    |
+| GET    | `/api/players`                        | List all players                   |
+| POST   | `/api/players/{playerId}/loves`       | Love a game (`{"gameId": 1}`)      |
+| DELETE | `/api/players/{playerId}/loves/{gameId}` | Unlove a game                   |
+| GET    | `/api/players/{playerId}/loves`       | List games loved by player         |
+
+## Setup
+
+```bash
+composer install
+php bin/console doctrine:schema:create
+```
+
+## Run
+
+```bash
+php -S localhost:8000 -t public
+```
+
+## Tests
+
+```bash
+php bin/phpunit
+```
+
+29 tests (18 unit + 11 functional) covering all endpoints, validation, and edge cases.
+
+## Example Usage
+
+```bash
+# Create a game
+curl -X POST http://localhost:8000/api/games \
+  -H 'Content-Type: application/json' \
+  -d '{"title": "Counter-Strike 2"}'
+
+# Create a player
+curl -X POST http://localhost:8000/api/players \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Alice"}'
+
+# Love a game
+curl -X POST http://localhost:8000/api/players/1/loves \
+  -H 'Content-Type: application/json' \
+  -d '{"gameId": 1}'
+
+# Get top 5 loved games
+curl http://localhost:8000/api/games/top?limit=5
+
+# Unlove a game
+curl -X DELETE http://localhost:8000/api/players/1/loves/1
+```
