@@ -32,6 +32,8 @@ class GameLoveApiTest extends WebTestCase
         return json_decode($this->client->getResponse()->getContent(), true);
     }
 
+    // --- Game CRUD ---
+
     public function testCreateGame(): void
     {
         $this->post('/api/games', ['title' => 'Chess']);
@@ -47,6 +49,21 @@ class GameLoveApiTest extends WebTestCase
         $this->assertResponseStatusCodeSame(400);
     }
 
+    public function testCreateGameRejectsWhitespaceOnlyTitle(): void
+    {
+        $this->post('/api/games', ['title' => '   ']);
+
+        $this->assertResponseStatusCodeSame(400);
+    }
+
+    public function testCreateGameInvalidJson(): void
+    {
+        $this->client->request('POST', '/api/games', [], [], ['CONTENT_TYPE' => 'application/json'], '{invalid');
+
+        $this->assertResponseStatusCodeSame(400);
+        $this->assertSame('Invalid JSON', $this->json()['error']);
+    }
+
     public function testListGames(): void
     {
         $this->post('/api/games', ['title' => 'Chess']);
@@ -55,8 +72,29 @@ class GameLoveApiTest extends WebTestCase
         $this->client->request('GET', '/api/games');
 
         $this->assertResponseIsSuccessful();
-        $this->assertCount(2, $this->json());
+        $data = $this->json();
+        $this->assertCount(2, $data['data']);
+        $this->assertSame(2, $data['total']);
+        $this->assertSame(1, $data['page']);
     }
+
+    public function testListGamesPagination(): void
+    {
+        for ($i = 1; $i <= 5; $i++) {
+            $this->post('/api/games', ['title' => "Game $i"]);
+        }
+
+        $this->client->request('GET', '/api/games?page=2&limit=2');
+
+        $this->assertResponseIsSuccessful();
+        $data = $this->json();
+        $this->assertCount(2, $data['data']);
+        $this->assertSame(5, $data['total']);
+        $this->assertSame(2, $data['page']);
+        $this->assertSame(2, $data['limit']);
+    }
+
+    // --- Player CRUD ---
 
     public function testCreatePlayer(): void
     {
@@ -65,6 +103,29 @@ class GameLoveApiTest extends WebTestCase
         $this->assertResponseStatusCodeSame(201);
         $this->assertSame('Alice', $this->json()['name']);
     }
+
+    public function testCreatePlayerRejectsWhitespaceOnlyName(): void
+    {
+        $this->post('/api/players', ['name' => '   ']);
+
+        $this->assertResponseStatusCodeSame(400);
+    }
+
+    public function testListPlayersPagination(): void
+    {
+        for ($i = 1; $i <= 5; $i++) {
+            $this->post('/api/players', ['name' => "Player $i"]);
+        }
+
+        $this->client->request('GET', '/api/players?page=1&limit=3');
+
+        $this->assertResponseIsSuccessful();
+        $data = $this->json();
+        $this->assertCount(3, $data['data']);
+        $this->assertSame(5, $data['total']);
+    }
+
+    // --- Love / Unlove ---
 
     public function testLoveGame(): void
     {
@@ -107,6 +168,14 @@ class GameLoveApiTest extends WebTestCase
 
         $this->client->request('GET', "/api/players/{$playerId}/loves");
         $this->assertCount(0, $this->json());
+    }
+
+    public function testUnloveNonExistentPlayerReturnsPlayerNotFound(): void
+    {
+        $this->client->request('DELETE', '/api/players/999/loves/1');
+
+        $this->assertResponseStatusCodeSame(404);
+        $this->assertSame('Player not found', $this->json()['error']);
     }
 
     public function testListPlayerLoves(): void

@@ -18,4 +18,22 @@ class PlayerRepository extends ServiceEntityRepository implements PlayerReposito
         /** @var Player|null */
         return $this->find($id);
     }
+
+    public function findPaginated(int $offset, int $limit): array
+    {
+        return $this->createQueryBuilder('p')
+            ->orderBy('p.id', 'ASC')
+            ->setFirstResult($offset)
+            ->setMaxResults($limit)
+            ->getQuery()
+            ->getResult();
+    }
+
+    public function countAll(): int
+    {
+        return (int) $this->createQueryBuilder('p')
+            ->select('COUNT(p.id)')
+            ->getQuery()
+            ->getSingleScalarResult();
+    }
 }

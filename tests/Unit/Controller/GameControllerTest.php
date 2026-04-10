@@ -4,76 +4,102 @@ namespace App\Tests\Unit\Controller;
 
 use App\Controller\GameController;
 use App\Entity\Game;
-use App\Repository\GameLoveRepositoryInterface;
-use App\Repository\GameRepositoryInterface;
-use Doctrine\ORM\EntityManagerInterface;
+use App\Service\GameService;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\Validator\ConstraintViolation;
+use Symfony\Component\Validator\ConstraintViolationList;
+use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 class GameControllerTest extends TestCase
 {
-    public function testListReturnsAllGames(): void
+    public function testListReturnsPaginatedGames(): void
     {
         $game1 = new Game('Chess');
         $game2 = new Game('Go');
-        $this->setId($game1, 1);
-        $this->setId($game2, 2);
+        (new \ReflectionProperty($game1, 'id'))->setValue($game1, 1);
+        (new \ReflectionProperty($game2, 'id'))->setValue($game2, 2);
 
-        $repo = $this->createStub(GameRepositoryInterface::class);
-        $repo->method('findAll')->willReturn([$game1, $game2]);
+        $service = $this->createStub(GameService::class);
+        $service->method('list')->willReturn(['items' => [$game1, $game2], 'total' => 2]);
 
-        $controller = new GameController($repo, $this->createStub(GameLoveRepositoryInterface::class), $this->createStub(EntityManagerInterface::class));
-        $response = $controller->list();
+        $controller = new GameController($service, $this->createStub(ValidatorInterface::class));
+        $response = $controller->list(new Request());
         $data = json_decode($response->getContent(), true);
 
         $this->assertSame(200, $response->getStatusCode());
-        $this->assertCount(2, $data);
-        $this->assertSame('Chess', $data[0]['title']);
-        $this->assertSame('Go', $data[1]['title']);
+        $this->assertCount(2, $data['data']);
+        $this->assertSame('Chess', $data['data'][0]['title']);
+        $this->assertSame('Go', $data['data'][1]['title']);
+        $this->assertSame(2, $data['total']);
     }
 
     public function testListReturnsEmptyArray(): void
     {
-        $repo = $this->createStub(GameRepositoryInterface::class);
-        $repo->method('findAll')->willReturn([]);
+        $service = $this->createStub(GameService::class);
+        $service->method('list')->willReturn(['items' => [], 'total' => 0]);
 
-        $controller = new GameController($repo, $this->createStub(GameLoveRepositoryInterface::class), $this->createStub(EntityManagerInterface::class));
-        $response = $controller->list();
+        $controller = new GameController($service, $this->createStub(ValidatorInterface::class));
+        $response = $controller->list(new Request());
+        $data = json_decode($response->getContent(), true);
 
         $this->assertSame(200, $response->getStatusCode());
-        $this->assertSame([], json_decode($response->getContent(), true));
+        $this->assertSame([], $data['data']);
+        $this->assertSame(0, $data['total']);
     }
 
     public function testCreateGame(): void
     {
-        $em = $this->createMock(EntityManagerInterface::class);
-        $em->expects($this->once())->method('persist')->with($this->isInstanceOf(Game::class));
-        $em->expects($this->once())->method('flush');
+        $game = new Game('Chess');
+        (new \ReflectionProperty($game, 'id'))->setValue($game, 1);
 
-        $controller = new GameController($this->createStub(GameRepositoryInterface::class), $this->createStub(GameLoveRepositoryInterface::class), $em);
+        $service = $this->createStub(GameService::class);
+        $service->method('create')->willReturn($game);
+
+        $validator = $this->createStub(ValidatorInterface::class);
+        $validator->method('validate')->willReturn(new ConstraintViolationList());
+
+        $controller = new GameController($service, $validator);
         $response = $controller->create(new Request(content: json_encode(['title' => 'Chess'])));
 
         $this->assertSame(201, $response->getStatusCode());
         $this->assertSame('Chess', json_decode($response->getContent(), true)['title']);
     }
 
-    public function testCreateGameRequiresTitle(): void
+    public function testCreateGameInvalidJson(): void
     {
-        $controller = new GameController($this->createStub(GameRepositoryInterface::class), $this->createStub(GameLoveRepositoryInterface::class), $this->createStub(EntityManagerInterface::class));
+        $controller = new GameController(
+            $this->createStub(GameService::class),
+            $this->createStub(ValidatorInterface::class),
+        );
+        $response = $controller->create(new Request(content: 'not json'));
+
+        $this->assertSame(400, $response->getStatusCode());
+        $this->assertSame('Invalid JSON', json_decode($response->getContent(), true)['error']);
+    }
+
+    public function testCreateGameValidationFails(): void
+    {
+        $violation = new ConstraintViolation('Title is required', '', [], '', 'title', '');
+        $validator = $this->createStub(ValidatorInterface::class);
+        $validator->method('validate')->willReturn(new ConstraintViolationList([$violation]));
+
+        $controller = new GameController($this->createStub(GameService::class), $validator);
         $response = $controller->create(new Request(content: json_encode([])));
 
         $this->assertSame(400, $response->getStatusCode());
+        $this->assertSame('Title is required', json_decode($response->getContent(), true)['error']);
     }
 
     public function testTopLovedGames(): void
     {
-        $repo = $this->createStub(GameLoveRepositoryInterface::class);
-        $repo->method('findTopLovedGames')->willReturn([
+        $service = $this->createStub(GameService::class);
+        $service->method('topLoved')->willReturn([
             ['gameId' => 1, 'title' => 'Chess', 'loveCount' => 5],
             ['gameId' => 2, 'title' => 'Go', 'loveCount' => 3],
         ]);
 
-        $controller = new GameController($this->createStub(GameRepositoryInterface::class), $repo, $this->createStub(EntityManagerInterface::class));
+        $controller = new GameController($service, $this->createStub(ValidatorInterface::class));
         $response = $controller->top(new Request(query: ['limit' => '2']));
         $data = json_decode($response->getContent(), true);
 
@@ -85,17 +111,12 @@ class GameControllerTest extends TestCase
 
     public function testTopDefaultsToLimit10(): void
     {
-        $repo = $this->createMock(GameLoveRepositoryInterface::class);
-        $repo->expects($this->once())->method('findTopLovedGames')->with(10)->willReturn([]);
+        $service = $this->createMock(GameService::class);
+        $service->expects($this->once())->method('topLoved')->with(10)->willReturn([]);
 
-        $controller = new GameController($this->createStub(GameRepositoryInterface::class), $repo, $this->createStub(EntityManagerInterface::class));
+        $controller = new GameController($service, $this->createStub(ValidatorInterface::class));
         $response = $controller->top(new Request());
 
         $this->assertSame(200, $response->getStatusCode());
-    }
-
-    private function setId(object $entity, int $id): void
-    {
-        (new \ReflectionProperty($entity, 'id'))->setValue($entity, $id);
     }
 }

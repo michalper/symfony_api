@@ -2,45 +2,59 @@
 
 namespace App\Controller;
 
+use App\DTO\CreatePlayerInput;
 use App\Entity\Player;
-use App\Repository\PlayerRepositoryInterface;
-use Doctrine\ORM\EntityManagerInterface;
+use App\Service\PlayerService;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Attribute\Route;
+use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 #[Route('/api/players')]
 readonly class PlayerController
 {
     public function __construct(
-        private PlayerRepositoryInterface $playerRepository,
-        private EntityManagerInterface    $em,
+        private PlayerService $playerService,
+        private ValidatorInterface $validator,
     ) {}
 
     #[Route('', methods: ['GET'])]
-    public function list(): JsonResponse
+    public function list(Request $request): JsonResponse
     {
-        $players = $this->playerRepository->findAll();
+        $page = max(1, $request->query->getInt('page', 1));
+        $limit = min(100, max(1, $request->query->getInt('limit', 20)));
 
-        return new JsonResponse(array_map(fn(Player $player) => [
-            'id' => $player->getId(),
-            'name' => $player->getName(),
-        ], $players));
+        $result = $this->playerService->list($page, $limit);
+
+        return new JsonResponse([
+            'data' => array_map(fn(Player $player) => [
+                'id' => $player->getId(),
+                'name' => $player->getName(),
+            ], $result['items']),
+            'page' => $page,
+            'limit' => $limit,
+            'total' => $result['total'],
+        ]);
     }
 
     #[Route('', methods: ['POST'])]
     public function create(Request $request): JsonResponse
     {
-        $data = json_decode($request->getContent(), true);
-
-        if (empty($data['name'])) {
-            return new JsonResponse(['error' => 'Name is required'], Response::HTTP_BAD_REQUEST);
+        try {
+            $data = json_decode($request->getContent(), true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return new JsonResponse(['error' => 'Invalid JSON'], Response::HTTP_BAD_REQUEST);
         }
 
-        $player = new Player($data['name']);
-        $this->em->persist($player);
-        $this->em->flush();
+        $input = new CreatePlayerInput(trim((string) ($data['name'] ?? '')));
+        $violations = $this->validator->validate($input);
+
+        if (count($violations) > 0) {
+            return new JsonResponse(['error' => $violations[0]->getMessage()], Response::HTTP_BAD_REQUEST);
+        }
+
+        $player = $this->playerService->create($input->name);
 
         return new JsonResponse([
             'id' => $player->getId(),

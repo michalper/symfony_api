@@ -10,4 +10,9 @@ interface PlayerRepositoryInterface
 
     /** @return Player[] */
     public function findAll(): array;
+
+    /** @return Player[] */
+    public function findPaginated(int $offset, int $limit): array;
+
+    public function countAll(): int;
 }

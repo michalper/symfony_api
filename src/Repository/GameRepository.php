@@ -18,4 +18,22 @@ class GameRepository extends ServiceEntityRepository implements GameRepositoryIn
         /** @var Game|null */
         return $this->find($id);
     }
+
+    public function findPaginated(int $offset, int $limit): array
+    {
+        return $this->createQueryBuilder('g')
+            ->orderBy('g.id', 'ASC')
+            ->setFirstResult($offset)
+            ->setMaxResults($limit)
+            ->getQuery()
+            ->getResult();
+    }
+
+    public function countAll(): int
+    {
+        return (int) $this->createQueryBuilder('g')
+            ->select('COUNT(g.id)')
+            ->getQuery()
+            ->getSingleScalarResult();
+    }
 }

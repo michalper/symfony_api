@@ -6,12 +6,16 @@ use App\Controller\GameLoveController;
 use App\Entity\Game;
 use App\Entity\GameLove;
 use App\Entity\Player;
-use App\Repository\GameLoveRepositoryInterface;
-use App\Repository\GameRepositoryInterface;
-use App\Repository\PlayerRepositoryInterface;
-use Doctrine\ORM\EntityManagerInterface;
+use App\Exception\GameAlreadyLovedException;
+use App\Exception\GameNotFoundException;
+use App\Exception\LoveNotFoundException;
+use App\Exception\PlayerNotFoundException;
+use App\Service\GameLoveService;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\Validator\ConstraintViolation;
+use Symfony\Component\Validator\ConstraintViolationList;
+use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 class GameLoveControllerTest extends TestCase
 {
@@ -19,21 +23,15 @@ class GameLoveControllerTest extends TestCase
     {
         $player = $this->createPlayer(1, 'Alice');
         $game = $this->createGame(1, 'Chess');
+        $love = new GameLove($player, $game);
 
-        $playerRepo = $this->createStub(PlayerRepositoryInterface::class);
-        $playerRepo->method('findById')->willReturn($player);
+        $service = $this->createStub(GameLoveService::class);
+        $service->method('love')->willReturn($love);
 
-        $gameRepo = $this->createStub(GameRepositoryInterface::class);
-        $gameRepo->method('findById')->willReturn($game);
+        $validator = $this->createStub(ValidatorInterface::class);
+        $validator->method('validate')->willReturn(new ConstraintViolationList());
 
-        $loveRepo = $this->createStub(GameLoveRepositoryInterface::class);
-        $loveRepo->method('findOneByPlayerAndGame')->willReturn(null);
-
-        $em = $this->createMock(EntityManagerInterface::class);
-        $em->expects($this->once())->method('persist')->with($this->isInstanceOf(GameLove::class));
-        $em->expects($this->once())->method('flush');
-
-        $controller = new GameLoveController($playerRepo, $gameRepo, $loveRepo, $em);
+        $controller = new GameLoveController($service, $validator);
         $response = $controller->love(1, new Request(content: json_encode(['gameId' => 1])));
         $data = json_decode($response->getContent(), true);
 
@@ -42,57 +40,57 @@ class GameLoveControllerTest extends TestCase
         $this->assertSame(1, $data['gameId']);
     }
 
+    public function testLoveInvalidJson(): void
+    {
+        $controller = new GameLoveController(
+            $this->createStub(GameLoveService::class),
+            $this->createStub(ValidatorInterface::class),
+        );
+        $response = $controller->love(1, new Request(content: '{bad'));
+
+        $this->assertSame(400, $response->getStatusCode());
+        $this->assertSame('Invalid JSON', json_decode($response->getContent(), true)['error']);
+    }
+
     public function testLovePlayerNotFound(): void
     {
-        $playerRepo = $this->createStub(PlayerRepositoryInterface::class);
-        $playerRepo->method('findById')->willReturn(null);
+        $service = $this->createStub(GameLoveService::class);
+        $service->method('love')->willThrowException(new PlayerNotFoundException(999));
 
-        $controller = new GameLoveController(
-            $playerRepo,
-            $this->createStub(GameRepositoryInterface::class),
-            $this->createStub(GameLoveRepositoryInterface::class),
-            $this->createStub(EntityManagerInterface::class),
-        );
+        $validator = $this->createStub(ValidatorInterface::class);
+        $validator->method('validate')->willReturn(new ConstraintViolationList());
 
+        $controller = new GameLoveController($service, $validator);
         $response = $controller->love(999, new Request(content: json_encode(['gameId' => 1])));
 
         $this->assertSame(404, $response->getStatusCode());
+        $this->assertSame('Player not found', json_decode($response->getContent(), true)['error']);
     }
 
     public function testLoveGameNotFound(): void
     {
-        $playerRepo = $this->createStub(PlayerRepositoryInterface::class);
-        $playerRepo->method('findById')->willReturn($this->createPlayer(1, 'Alice'));
+        $service = $this->createStub(GameLoveService::class);
+        $service->method('love')->willThrowException(new GameNotFoundException(999));
 
-        $gameRepo = $this->createStub(GameRepositoryInterface::class);
-        $gameRepo->method('findById')->willReturn(null);
+        $validator = $this->createStub(ValidatorInterface::class);
+        $validator->method('validate')->willReturn(new ConstraintViolationList());
 
-        $controller = new GameLoveController(
-            $playerRepo, $gameRepo,
-            $this->createStub(GameLoveRepositoryInterface::class),
-            $this->createStub(EntityManagerInterface::class),
-        );
-
+        $controller = new GameLoveController($service, $validator);
         $response = $controller->love(1, new Request(content: json_encode(['gameId' => 999])));
 
         $this->assertSame(404, $response->getStatusCode());
+        $this->assertSame('Game not found', json_decode($response->getContent(), true)['error']);
     }
 
     public function testLoveDuplicate(): void
     {
-        $player = $this->createPlayer(1, 'Alice');
-        $game = $this->createGame(1, 'Chess');
+        $service = $this->createStub(GameLoveService::class);
+        $service->method('love')->willThrowException(new GameAlreadyLovedException(1, 1));
 
-        $playerRepo = $this->createStub(PlayerRepositoryInterface::class);
-        $playerRepo->method('findById')->willReturn($player);
+        $validator = $this->createStub(ValidatorInterface::class);
+        $validator->method('validate')->willReturn(new ConstraintViolationList());
 
-        $gameRepo = $this->createStub(GameRepositoryInterface::class);
-        $gameRepo->method('findById')->willReturn($game);
-
-        $loveRepo = $this->createStub(GameLoveRepositoryInterface::class);
-        $loveRepo->method('findOneByPlayerAndGame')->willReturn(new GameLove($player, $game));
-
-        $controller = new GameLoveController($playerRepo, $gameRepo, $loveRepo, $this->createStub(EntityManagerInterface::class));
+        $controller = new GameLoveController($service, $validator);
         $response = $controller->love(1, new Request(content: json_encode(['gameId' => 1])));
 
         $this->assertSame(409, $response->getStatusCode());
@@ -100,16 +98,11 @@ class GameLoveControllerTest extends TestCase
 
     public function testLoveMissingGameId(): void
     {
-        $playerRepo = $this->createStub(PlayerRepositoryInterface::class);
-        $playerRepo->method('findById')->willReturn($this->createPlayer(1, 'Alice'));
+        $violation = new ConstraintViolation('gameId is required', '', [], '', 'gameId', null);
+        $validator = $this->createStub(ValidatorInterface::class);
+        $validator->method('validate')->willReturn(new ConstraintViolationList([$violation]));
 
-        $controller = new GameLoveController(
-            $playerRepo,
-            $this->createStub(GameRepositoryInterface::class),
-            $this->createStub(GameLoveRepositoryInterface::class),
-            $this->createStub(EntityManagerInterface::class),
-        );
-
+        $controller = new GameLoveController($this->createStub(GameLoveService::class), $validator);
         $response = $controller->love(1, new Request(content: json_encode([])));
 
         $this->assertSame(400, $response->getStatusCode());
@@ -117,35 +110,32 @@ class GameLoveControllerTest extends TestCase
 
     public function testUnloveGame(): void
     {
-        $love = new GameLove($this->createPlayer(1, 'Alice'), $this->createGame(1, 'Chess'));
+        $service = $this->createMock(GameLoveService::class);
+        $service->expects($this->once())->method('unlove')->with(1, 1);
 
-        $loveRepo = $this->createStub(GameLoveRepositoryInterface::class);
-        $loveRepo->method('findOneByPlayerAndGame')->willReturn($love);
-
-        $em = $this->createMock(EntityManagerInterface::class);
-        $em->expects($this->once())->method('remove')->with($love);
-        $em->expects($this->once())->method('flush');
-
-        $controller = new GameLoveController(
-            $this->createStub(PlayerRepositoryInterface::class),
-            $this->createStub(GameRepositoryInterface::class),
-            $loveRepo, $em,
-        );
+        $controller = new GameLoveController($service, $this->createStub(ValidatorInterface::class));
 
         $this->assertSame(204, $controller->unlove(1, 1)->getStatusCode());
     }
 
-    public function testUnloveNotFound(): void
+    public function testUnlovePlayerNotFound(): void
     {
-        $loveRepo = $this->createStub(GameLoveRepositoryInterface::class);
-        $loveRepo->method('findOneByPlayerAndGame')->willReturn(null);
+        $service = $this->createStub(GameLoveService::class);
+        $service->method('unlove')->willThrowException(new PlayerNotFoundException(999));
 
-        $controller = new GameLoveController(
-            $this->createStub(PlayerRepositoryInterface::class),
-            $this->createStub(GameRepositoryInterface::class),
-            $loveRepo,
-            $this->createStub(EntityManagerInterface::class),
-        );
+        $controller = new GameLoveController($service, $this->createStub(ValidatorInterface::class));
+        $response = $controller->unlove(999, 1);
+
+        $this->assertSame(404, $response->getStatusCode());
+        $this->assertSame('Player not found', json_decode($response->getContent(), true)['error']);
+    }
+
+    public function testUnloveLoveNotFound(): void
+    {
+        $service = $this->createStub(GameLoveService::class);
+        $service->method('unlove')->willThrowException(new LoveNotFoundException(1, 1));
+
+        $controller = new GameLoveController($service, $this->createStub(ValidatorInterface::class));
 
         $this->assertSame(404, $controller->unlove(1, 1)->getStatusCode());
     }
@@ -155,19 +145,10 @@ class GameLoveControllerTest extends TestCase
         $player = $this->createPlayer(1, 'Alice');
         $game = $this->createGame(1, 'Chess');
 
-        $playerRepo = $this->createStub(PlayerRepositoryInterface::class);
-        $playerRepo->method('findById')->willReturn($player);
+        $service = $this->createStub(GameLoveService::class);
+        $service->method('listByPlayer')->willReturn([new GameLove($player, $game)]);
 
-        $loveRepo = $this->createStub(GameLoveRepositoryInterface::class);
-        $loveRepo->method('findByPlayer')->willReturn([new GameLove($player, $game)]);
-
-        $controller = new GameLoveController(
-            $playerRepo,
-            $this->createStub(GameRepositoryInterface::class),
-            $loveRepo,
-            $this->createStub(EntityManagerInterface::class),
-        );
-
+        $controller = new GameLoveController($service, $this->createStub(ValidatorInterface::class));
         $response = $controller->list(1);
         $data = json_decode($response->getContent(), true);
 
@@ -178,15 +159,10 @@ class GameLoveControllerTest extends TestCase
 
     public function testListPlayerNotFound(): void
     {
-        $playerRepo = $this->createStub(PlayerRepositoryInterface::class);
-        $playerRepo->method('findById')->willReturn(null);
+        $service = $this->createStub(GameLoveService::class);
+        $service->method('listByPlayer')->willThrowException(new PlayerNotFoundException(999));
 
-        $controller = new GameLoveController(
-            $playerRepo,
-            $this->createStub(GameRepositoryInterface::class),
-            $this->createStub(GameLoveRepositoryInterface::class),
-            $this->createStub(EntityManagerInterface::class),
-        );
+        $controller = new GameLoveController($service, $this->createStub(ValidatorInterface::class));
 
         $this->assertSame(404, $controller->list(999)->getStatusCode());
     }

@@ -10,4 +10,9 @@ interface GameRepositoryInterface
 
     /** @return Game[] */
     public function findAll(): array;
+
+    /** @return Game[] */
+    public function findPaginated(int $offset, int $limit): array;
+
+    public function countAll(): int;
 }
