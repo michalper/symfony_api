@@ -11,7 +11,9 @@
 /.env.local.php
 /.env.*.local
 
+/bin/phpunit
 /config/secrets/prod/prod.decrypt.private.php
+/config/reference.php
 /public/bundles/
 
 /phpunit.xml
